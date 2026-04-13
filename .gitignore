@@ -4,3 +4,5 @@ __pycache__/
 data/
 *.pbix
 *.log
+data/*
+!data/MostActiveStocks.csv

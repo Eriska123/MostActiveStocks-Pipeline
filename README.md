@@ -14,6 +14,33 @@ This project is a full end-to-end data pipeline that:
 API → Python ETL → SQL Server → Streamlit Dashboard
 
 ---
+## 🗄️ Database Setup
+
+This project uses SQL Server.
+
+### Step 1: Create Database
+Run the script:
+database/schema.sql
+
+
+### Step 2: Configure Connection
+
+Update `db.py`:
+SERVER=localhost\SQLEXPRESS
+DATABASE=StockDB
+
+
+---
+
+## 🔐 Deduplication Logic
+
+The system prevents duplicate records using a UNIQUE INDEX on:
+
+- stock_id
+- price
+- change
+- percent_change
+- volume
 
 ## ⚙️ Features
 

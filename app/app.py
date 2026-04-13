@@ -1,162 +1,127 @@
+# =====================================================
+# IMPORTS
+# =====================================================
 import streamlit as st
 import pandas as pd
-import pyodbc
-import plotly.express as px
+
+# Auto-refresh (every 60 seconds)
 from streamlit_autorefresh import st_autorefresh
-
-# Refresh every 60 seconds
 st_autorefresh(interval=60 * 1000, key="refresh")
-
-@st.cache_data(ttl=60)
-def load_data():
-    conn = get_connection()
-    df = pd.read_sql("""
-        SELECT s.symbol, s.company_name,
-               sp.price, sp.change,
-               sp.percent_change, sp.volume,
-               sp.last_updated
-        FROM stock_prices sp
-        JOIN stocks s ON sp.stock_id = s.stock_id
-    """, conn)
-    conn.close()
-    return df
 
 # =====================================================
 # PAGE CONFIG
 # =====================================================
 st.set_page_config(
-    page_title="Most Active Stocks Dashboard",
+    page_title="Stock Market Dashboard",
     layout="wide"
 )
 
-st.title("📊 Portfolio-Level Stocks Dashboard")
-st.caption("Interactive dashboard with KPIs, charts, and filters")
+st.title("📊 Stock Market Decision Dashboard")
+st.caption("Real-time insights from Most Active Stocks")
 
 # =====================================================
-# DATABASE CONNECTION
+# LOAD DATA (CACHED)
 # =====================================================
-def get_connection():
-    return pyodbc.connect(
-        "DRIVER={ODBC Driver 17 for SQL Server};"
-        "SERVER=localhost\\SQLEXPRESS;"  # adjust as needed
-        "DATABASE=StockDB;"
-        "Trusted_Connection=yes;"
-    )
-
-# =====================================================
-# LOAD DATA
-# =====================================================
-@st.cache_data
+@st.cache_data(ttl=60)
 def load_data():
-    conn = get_connection()
-    query = """
-    SELECT 
-        s.symbol,
-        s.company_name,
-        sp.price,
-        sp.change,
-        sp.percent_change,
-        sp.volume,
-        sp.last_updated
-    FROM stock_prices sp
-    JOIN stocks s ON sp.stock_id = s.stock_id
-    """
-    df = pd.read_sql(query, conn)
-    conn.close()
-    df["last_updated"] = pd.to_datetime(df["last_updated"])
-    return df
+    try:
+        # Try both paths (local + cloud safe)
+        try:
+            df = pd.read_csv("data/MostActiveStocks.csv")
+        except:
+            df = pd.read_csv("../data/MostActiveStocks.csv")
 
+        # Ensure correct types
+        df["Price"] = pd.to_numeric(df["Price"], errors="coerce")
+        df["Change"] = pd.to_numeric(df["Change"], errors="coerce")
+        df["PercentChange"] = pd.to_numeric(df["PercentChange"], errors="coerce")
+        df["Volume"] = pd.to_numeric(df["Volume"], errors="coerce")
+
+        return df.dropna()
+
+    except Exception as e:
+        st.error(f"❌ Error loading data: {e}")
+        return pd.DataFrame()
+
+# Load data
 df = load_data()
+
 if df.empty:
-    st.warning("⚠️ No data available.")
+    st.warning("No data available.")
     st.stop()
 
 # =====================================================
-# SIDEBAR FILTERS
+# KPI SECTION
 # =====================================================
-st.sidebar.header("Filters")
+st.subheader("📌 Key Market Indicators")
 
-symbols = st.sidebar.multiselect(
+col1, col2, col3, col4 = st.columns(4)
+
+# KPIs
+top_stock = df.loc[df["Volume"].idxmax()]
+avg_price = df["Price"].mean()
+total_volume = df["Volume"].sum()
+top_gainer = df.loc[df["PercentChange"].idxmax()]
+
+col1.metric("Top Stock (Volume)", top_stock["Symbol"])
+col2.metric("Average Price", f"${avg_price:,.2f}")
+col3.metric("Total Volume", f"{total_volume:,.0f}")
+col4.metric("Top Gainer", top_gainer["Symbol"])
+
+# =====================================================
+# FILTER
+# =====================================================
+st.subheader("🔍 Filter Stocks")
+
+selected_symbols = st.multiselect(
     "Select Stocks",
-    options=df["symbol"].unique(),
-    default=df["symbol"].unique()
+    options=df["Symbol"].unique(),
+    default=df["Symbol"].unique()[:10]
 )
 
-date_range = st.sidebar.date_input(
-    "Select Date Range",
-    value=[df["last_updated"].min().date(), df["last_updated"].max().date()]
-)
-
-# Apply filters
-filtered_df = df[
-    (df["symbol"].isin(symbols)) &
-    (df["last_updated"].dt.date.between(date_range[0], date_range[1]))
-]
-
-if filtered_df.empty:
-    st.warning("⚠️ No data after filtering.")
-    st.stop()
-
-latest_df = filtered_df.sort_values("last_updated").groupby("symbol").last().reset_index()
+filtered_df = df[df["Symbol"].isin(selected_symbols)]
 
 # =====================================================
-# KPI LAYER
+# TABLE
 # =====================================================
-total_volume = latest_df["volume"].sum()
-top_stock = latest_df.loc[latest_df["volume"].idxmax()]
-avg_price = latest_df["price"].mean()
-top_gainer = latest_df.loc[latest_df["percent_change"].idxmax()]
-top_loser = latest_df.loc[latest_df["percent_change"].idxmin()]
+st.subheader("📋 Stock Data")
 
-col1, col2, col3, col4, col5 = st.columns(5)
-col1.metric("Total Market Volume", f"{total_volume:,.0f}")
-col2.metric("Top Stock", top_stock["symbol"], f"Vol: {top_stock['volume']:,.0f}")
-col3.metric("Average Price", f"${avg_price:,.2f}")
-col4.metric("Top Gainer", top_gainer["symbol"], f"{top_gainer['percent_change']:.2f}%")
-col5.metric("Top Loser", top_loser["symbol"], f"{top_loser['percent_change']:.2f}%")
-
-st.divider()
+st.dataframe(filtered_df, use_container_width=True)
 
 # =====================================================
-# TOP N STOCKS BY VOLUME
+# CHARTS
 # =====================================================
-st.subheader("📊 Top N Stocks by Volume")
-top_n = st.slider("Select Top N Stocks", 5, 20, 10)
-top_volume_df = latest_df.nlargest(top_n, "volume")
-st.bar_chart(top_volume_df.set_index("symbol")["volume"])
+st.subheader("📈 Market Insights")
+
+col1, col2 = st.columns(2)
+
+with col1:
+    st.write("### Price Distribution")
+    st.bar_chart(filtered_df.set_index("Symbol")["Price"])
+
+with col2:
+    st.write("### Volume Distribution")
+    st.bar_chart(filtered_df.set_index("Symbol")["Volume"])
 
 # =====================================================
-# MARKET SHARE PIE CHART
+# TOP MOVERS
 # =====================================================
-st.subheader("📈 Market Share (%) by Volume")
-market_share_df = latest_df.copy()
-market_share_df["market_share"] = market_share_df["volume"] / market_share_df["volume"].sum() * 100
+st.subheader("🚀 Top Movers")
 
-fig_share = px.pie(
-    market_share_df,
-    names="symbol",
-    values="market_share",
-    title="Market Share by Volume"
-)
-st.plotly_chart(fig_share, use_container_width=True)
+col1, col2 = st.columns(2)
 
-# =====================================================
-# PRICE TREND OVER TIME
-# =====================================================
-st.subheader("📈 Price Trend Over Time")
-selected_stock = st.selectbox("Select Stock for Trend", latest_df["symbol"].unique())
-stock_history = filtered_df[filtered_df["symbol"] == selected_stock].sort_values("last_updated")
+with col1:
+    st.write("### 🔺 Top Gainers")
+    gainers = df.sort_values(by="PercentChange", ascending=False).head(5)
+    st.dataframe(gainers[["Symbol", "PercentChange"]])
 
-fig_trend = px.line(
-    stock_history,
-    x="last_updated",
-    y="price",
-    title=f"{selected_stock} Price Trend"
-)
-st.plotly_chart(fig_trend, use_container_width=True)
+with col2:
+    st.write("### 🔻 Top Losers")
+    losers = df.sort_values(by="PercentChange", ascending=True).head(5)
+    st.dataframe(losers[["Symbol", "PercentChange"]])
 
 # =====================================================
-# DATA TABLE (VALIDATION)
+# FOOTER
 # =====================================================
-st.subheader("📋 Latest Market Snapshot")
-st.dataframe(latest_df, use_container_width=True)
+st.markdown("---")
+st.caption("⚡ Auto-refresh every 60 seconds | Data via Yahoo Finance")
